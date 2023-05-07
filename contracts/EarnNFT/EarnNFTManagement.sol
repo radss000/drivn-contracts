@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.0;
+pragma solidity 0.8.18;
 
-import "C:\Users\radia\node_modules\@openzeppelin\contracts\cryptography\ECDSA.sol";
+import "./ECDSA.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ContextUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
@@ -9,7 +9,7 @@ import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts/utils/Counters.sol";
 
 import "./IEarnNFT.sol";
-import "../GTT.sol";
+import "./IGTT.sol";
 
 // enum for electic vehicle
 enum EType { CAR, BICYCLE, SCOOTER }
@@ -79,7 +79,7 @@ contract EarnNFTManagement is Initializable, ContextUpgradeable, OwnableUpgradea
     /**
      * @dev Emitted when merge method is called
      */
-    event Merge(address indexed sender, uint256 indexed tokenId1, uint256 indexed tokenId2, uint256 newToken);
+    event Merge(address indexed owner, uint256 indexed tokenId, uint256 newPower, Level rarity);
 
 
     /** 
@@ -184,38 +184,96 @@ contract EarnNFTManagement is Initializable, ContextUpgradeable, OwnableUpgradea
         emit Mint(msg.sender, eType, tokenId);
     }
 
+    function calculateMergeFee(Level newRarity) internal pure returns (uint256) {
+        uint256 fee;
+        if (newRarity == Level.UNCOMMON) {
+            fee = 2500 * 10**18; // Fee for Uncommon
+        } else if (newRarity == Level.RARE) {
+            fee = 5000 * 10**18; // Fee for Rare
+        } else if (newRarity == Level.EPIC) {
+            fee = 7500 * 10**18; // Fee for Epic
+        } else {
+            revert("Invalid rarity value");
+        }
+        return fee;
+    }
+
     /**
-     * @dev merging two nft
-     * @param tokenId1 first nft id for merging
-     * @param tokenId2 second nft id for merging
-    */
+ * @dev Merges up to 4 NFTs.
+ * @param tokenIds An array containing the token IDs of the NFTs to merge.
+ */
 
-    function merge(uint256 tokenId1, uint256 tokenId2) external {
-        require(earnNFT.ownerOf(tokenId1) == msg.sender 
-                    && earnNFT.ownerOf(tokenId2) == msg.sender, 
-                    "EarnNFTManagement: sender is not the owner of the tokens");
-        require(nftInfo[tokenId1].eType == nftInfo[tokenId2].eType, 
-            "EarnNFTManagement: EType of nft does not match");
 
-        // calculate new nft power and level
-        uint256 levelUint = uint256(nftInfo[tokenId1].nftType) + uint256(nftInfo[tokenId2].nftType) + 1;
-        require(levelUint <= uint256(Level.EPIC), "EarnNFTManagement: Power is too high");
+   function merge(uint256[] calldata tokenIds) external {
+        require(tokenIds.length >= 2 && tokenIds.length <= 4, "EarnNFTManagement: Invalid number of tokens to merge");
+        
+        EType eTypeToCheck = nftInfo[tokenIds[0]].eType;
+        uint8 commonCount = 0;
+        uint8 uncommonCount = 0;
+        uint8 rareCount = 0;
+        uint8 epicCount = 0;
 
-        // adding the token
+        for (uint256 i = 0; i < tokenIds.length; i++) {
+            require(earnNFT.ownerOf(tokenIds[i]) == msg.sender, "EarnNFTManagement: sender is not the owner of the tokens");
+            require(nftInfo[tokenIds[i]].eType == eTypeToCheck, "EarnNFTManagement: EType of nft does not match");
+
+            Level rarity = nftInfo[tokenIds[i]].nftType;
+            if (rarity == Level.COMMON) {
+                commonCount++;
+            } else if (rarity == Level.UNCOMMON) {
+                uncommonCount++;
+            } else if (rarity == Level.RARE) {
+                rareCount++;
+            } else if (rarity == Level.EPIC) {
+                epicCount++;
+            }
+        }
+
+        Level newRarity;
+        uint256 newPower;
+
+        if (commonCount == 2 && uncommonCount == 0 && rareCount == 0 && epicCount == 0) {
+            newRarity = Level.UNCOMMON;
+            newPower = 1800;
+        } else if (commonCount == 3 && uncommonCount == 0 && rareCount == 0 && epicCount == 0) {
+            newRarity = Level.RARE;
+            newPower = 2700;
+        } else if (commonCount == 1 && uncommonCount == 1 && rareCount == 0 && epicCount == 0) {
+            newRarity = Level.RARE;
+            newPower = 2700;
+        } else if (commonCount == 4 && uncommonCount == 0 && rareCount == 0 && epicCount == 0) {
+            newRarity = Level.EPIC;
+            newPower = 3600;
+        } else if (commonCount == 0 && uncommonCount == 2 && rareCount == 0 && epicCount == 0) {
+            newRarity = Level.EPIC;
+            newPower = 3600;
+        } else if (commonCount == 1 && uncommonCount == 0 && rareCount == 0 && epicCount == 1) {
+            newRarity = Level.EPIC;
+            newPower = 3600;
+        } else {
+            revert("EarnNFTManagement: Invalid merge combination");
+        }
+
+
+        uint256 fee = calculateMergeFee(newRarity);
+        gttCoin.transferFrom(msg.sender, address(this), fee);
+
         uint256 tokenId = earnNFT.mint(msg.sender);
 
         nftInfo[tokenId] = NFTInformation(
-            Level(levelUint), // nft type is common
-            nftInfo[tokenId1].eType, // vehicle
-            0 // power claimed
+            newRarity,
+            eTypeToCheck,
+            newPower
         );
 
-        // burning merged tokens
-        earnNFT.burn(tokenId1);
-        earnNFT.burn(tokenId2);
+        for (uint256 i = 0; i < tokenIds.length; i++) {
+            earnNFT.burn(tokenIds[i]);
+        }
 
-        emit Merge(msg.sender, tokenId1, tokenId2, tokenId);
+        emit Merge(msg.sender, tokenId, newPower, newRarity);
     }
+
+
     /** 
      * @dev callback for Api Consumer
      * @param tokenId id of token
