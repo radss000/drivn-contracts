@@ -56,19 +56,37 @@ contract EarnNFTManagement is Initializable, ContextUpgradeable, OwnableUpgradea
     uint256 public maxScooterSupply;
 
     // commong token price
-    uint256 public constant commonTokenCarPrice = 0.01 ether;
+    uint256 public carTokenPrice;
 
     // commong token price
-    uint256 public constant commonTokenBicyclePrice = 0.01 ether;
+    uint256 public bicycleTokenPrice;
 
     // commong token price
-    uint256 public constant commonTokenScooterPrice = 0.01 ether;
+    uint256 public scooterTokenPrice;
+
+    // daily power cap
+    uint256 public dailyPowerCap;
+
+    // daily token cap
+    uint256 public dailyTokenCap;
+
+    // mapping for daily claimed power
+    mapping(uint256 => mapping(address => uint256)) public dailyClaimedPower;
+
+    // mapping for daily claimed tokens
+    mapping(uint256 => mapping(address => uint256)) public dailyClaimedTokens;
+
+    // variable to store the timestamp of the last claim
+    uint256 public lastClaimTimestamp;
 
     // mapping for allowed addresses
     mapping(address=>bool) public isAllowed;
 
     // signer of the message
     address public messageSigner;
+
+    uint256 private constant BASE_MERGE_FEE = 1000;
+
 
 
     /**
@@ -82,17 +100,31 @@ contract EarnNFTManagement is Initializable, ContextUpgradeable, OwnableUpgradea
     event Merge(address indexed owner, uint256 indexed tokenId, uint256 newPower, Level rarity);
 
 
-    /** 
+        // daily claim limit
+    uint256 public dailyClaimLimit;
+
+    /**
      * @dev Sets main dependencies and constants
      * @param earnNFTAddress_ ERC721 contract address
      * @param gttAddress_ GTT ERC20 address
      * @param url url of backend endpoint
-    */
-
+     * @param carTokenPrice_ price of car token
+     * @param bicycleTokenPrice_ price of bicycle token
+     * @param scooterTokenPrice_ price of scooter token
+     * @param dailyPowerCap_ daily power cap
+     * @param dailyTokenCap_ daily token cap
+     * @param dailyClaimLimit_ daily claim limit
+     */
     function initialize(
         address earnNFTAddress_,
         address gttAddress_,
-        string memory url
+        string memory url,
+        uint256 carTokenPrice_,
+        uint256 bicycleTokenPrice_,
+        uint256 scooterTokenPrice_,
+        uint256 dailyPowerCap_,
+        uint256 dailyTokenCap_,
+        uint256 dailyClaimLimit_
     )
     public initializer 
     {
@@ -106,7 +138,17 @@ contract EarnNFTManagement is Initializable, ContextUpgradeable, OwnableUpgradea
         maxCarSupply = 7000;
         maxBicycleSupply = 1000;
         maxScooterSupply = 2000;
+
+        carTokenPrice = carTokenPrice_;
+        bicycleTokenPrice = bicycleTokenPrice_;
+        scooterTokenPrice = scooterTokenPrice_;
+
+        dailyPowerCap = dailyPowerCap_;
+        dailyTokenCap = dailyTokenCap_;
+        dailyClaimLimit = dailyClaimLimit_;
+        lastClaimTimestamp = block.timestamp;    
     }
+
 
     /**
      * @dev setting maxCarSupply
@@ -149,54 +191,90 @@ contract EarnNFTManagement is Initializable, ContextUpgradeable, OwnableUpgradea
      * @dev buying the token
      * @param eType vehicle type
     */
+     
+    function mint(EType eType, bytes memory allowSignature) external payable {
+        require(isAllowed[msg.sender], "EarnNFTManagement: Sender not allowed");
 
-    function mint(EType eType) external payable {
+        uint256 price;
+        if (eType == EType.CAR) {
+            price = carTokenPrice;
+        } else if (eType == EType.BICYCLE) {
+            price = bicycleTokenPrice;
+        } else if (eType == EType.SCOOTER) {
+            price = scooterTokenPrice;
+        } else {
+            revert("EarnNFTManagement: Invalid vehicle type");
+        }
+
+        require(msg.value == price, "EarnNFTManagement: Incorrect Ether value");
+
+        // Check if user has reached their daily power and token cap
+        require(dailyClaimedPower[block.timestamp][msg.sender] < dailyPowerCap, "EarnNFTManagement: User has reached their daily Power cap");
+        require(dailyClaimedTokens[block.timestamp][msg.sender] < dailyTokenCap, "EarnNFTManagement: User has reached their daily Token cap");
 
         if (eType == EType.CAR) {
             carCounter.increment();
             uint256 carCount = carCounter.current();
-            require(commonTokenCarPrice == msg.value, "EarnNFTManagement: not enough money");
-            require(carCount <= maxCarSupply, "EarnNFTManagement: can't mint, max car supply reached");
-        }
-        
-        if (eType == EType.BICYCLE) {
+            require(carCount <= maxCarSupply, "EarnNFTManagement: Can't mint, max car supply reached");
+        } else if (eType == EType.BICYCLE) {
             bicycleCounter.increment();
-            uint256 _bicycleCount = bicycleCounter.current();
-            require(commonTokenBicyclePrice == msg.value, "EarnNFTManagement: not enough money");
-            require(_bicycleCount <= maxBicycleSupply, "EarnNFTManagement: can't mint, max bicycle supply reached");
-        }
-
-        if (eType == EType.SCOOTER) {
+            uint256 bicycleCount = bicycleCounter.current();
+            require(bicycleCount <= maxBicycleSupply, "EarnNFTManagement: Can't mint, max bicycle supply reached");
+        } else if (eType == EType.SCOOTER) {
             scooterCounter.increment();
-            uint256 _scooterCount = scooterCounter.current();
-            require(commonTokenScooterPrice == msg.value, "EarnNFTManagement: not enough money");
-            require(_scooterCount <= maxScooterSupply, "EarnNFTManagement: can't mint, max scooter supply reached");
+            uint256 scooterCount = scooterCounter.current();
+            require(scooterCount <= maxScooterSupply, "EarnNFTManagement: Can't mint, max scooter supply reached");
         }
 
         uint256 tokenId = earnNFT.mint(msg.sender);
 
         nftInfo[tokenId] = NFTInformation(
-            Level.COMMON, // nft type is common
-            eType, // EVehile
-            0 // power claimed
-        );
+                Level.COMMON, // nft type is common
+                eType, // EVehile
+                0 // power claimed
+            );
 
         emit Mint(msg.sender, eType, tokenId);
     }
 
-    function calculateMergeFee(Level newRarity) internal pure returns (uint256) {
-        uint256 fee;
-        if (newRarity == Level.UNCOMMON) {
-            fee = 2500 * 10**18; // Fee for Uncommon
-        } else if (newRarity == Level.RARE) {
-            fee = 5000 * 10**18; // Fee for Rare
-        } else if (newRarity == Level.EPIC) {
-            fee = 7500 * 10**18; // Fee for Epic
-        } else {
-            revert("Invalid rarity value");
-        }
-        return fee;
+uint256 private constant COMMON_RARITY_MULTIPLIER = 1;
+uint256 private constant UNCOMMON_RARITY_MULTIPLIER = 2;
+uint256 private constant RARE_RARITY_MULTIPLIER = 3;
+uint256 private constant EPIC_RARITY_MULTIPLIER = 4;
+
+function _getRarity(uint256 tokenId) private view returns (uint256) {
+    uint256 rarity = 0;
+    uint256 level = earnNFT.level(tokenId);
+    
+    if (level == 1) {
+        rarity = 1; // common
+    } else if (level == 2) {
+        rarity = 2; // uncommon
+    } else if (level == 3) {
+        rarity = 3; // rare
+    } else if (level == 4) {
+        rarity = 4; // epic
     }
+    
+    return rarity;
+}
+
+    function calculateMergeFee(Level newRarity) public view returns (uint256) {
+        uint256 rarityMultiplier = 0;
+        if (newRarity == Level.EPIC) {
+            rarityMultiplier = EPIC_RARITY_MULTIPLIER;
+        } else if (newRarity == Level.RARE) {
+            rarityMultiplier = RARE_RARITY_MULTIPLIER;
+        } else if (newRarity == Level.UNCOMMON) {
+            rarityMultiplier = UNCOMMON_RARITY_MULTIPLIER;
+        } else {
+            rarityMultiplier = COMMON_RARITY_MULTIPLIER;
+        }
+
+        uint256 mergeFee = BASE_MERGE_FEE * rarityMultiplier;
+    return mergeFee;
+    }
+
 
     /**
  * @dev Merges up to 4 NFTs.
@@ -254,7 +332,6 @@ contract EarnNFTManagement is Initializable, ContextUpgradeable, OwnableUpgradea
             revert("EarnNFTManagement: Invalid merge combination");
         }
 
-
         uint256 fee = calculateMergeFee(newRarity);
         gttCoin.transferFrom(msg.sender, address(this), fee);
 
@@ -266,13 +343,31 @@ contract EarnNFTManagement is Initializable, ContextUpgradeable, OwnableUpgradea
             newPower
         );
 
+        // burn original NFTs
         for (uint256 i = 0; i < tokenIds.length; i++) {
+            nftInfo[tokenIds[i]].powerClaimed = 0; // set claimed power to zero before burning
             earnNFT.burn(tokenIds[i]);
         }
 
         emit Merge(msg.sender, tokenId, newPower, newRarity);
     }
 
+    function getPowerClaimed(uint256 tokenId) public view returns (uint256) {
+    return nftInfo[tokenId].powerClaimed;
+    }
+
+
+    function setCarTokenPrice(uint256 price) external onlyOwner {  // setting the price in wei 
+    carTokenPrice = price;
+    }
+
+    function setBicycleTokenPrice(uint256 price) external onlyOwner {
+        bicycleTokenPrice = price;
+    }
+
+    function setScooterTokenPrice(uint256 price) external onlyOwner {
+        scooterTokenPrice = price;
+    }
 
     /** 
      * @dev callback for Api Consumer
@@ -286,9 +381,15 @@ contract EarnNFTManagement is Initializable, ContextUpgradeable, OwnableUpgradea
         address signatureAddress = hash.recover(allowSignature);
         require(signatureAddress == messageSigner, "EarnNFTManagement: invalid signature");
 
+        // Check if user has reached their daily claim limit
+        require(dailyClaimedPower[block.timestamp][msg.sender] + amount <= dailyClaimLimit, "EarnNFTManagement: User has reached their daily claim limit");
+
         gttCoin.mint(earnNFT.ownerOf(tokenId), amount - nftInfo[tokenId].powerClaimed);
         nftInfo[tokenId].powerClaimed = amount;
+
+        dailyClaimedPower[block.timestamp][msg.sender] += amount;
     }
+
 
     /**
      * @dev withdraw the amount of coins from contract address to owner
@@ -298,5 +399,4 @@ contract EarnNFTManagement is Initializable, ContextUpgradeable, OwnableUpgradea
         (bool success,) = payable(owner()).call{value : address(this).balance}("");
         require(success, "EarnNFTManagement: unsuccessful withdraw");
     }
-
 }
