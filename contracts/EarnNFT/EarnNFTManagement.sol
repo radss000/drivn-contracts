@@ -22,7 +22,10 @@ struct NFTInformation {
     Level nftType;
     EType eType;
     uint256 powerClaimed;
+    uint256 currentPower;
+    uint256 lastClaimTime;
 }
+
 
 contract EarnNFTManagement is Initializable, ContextUpgradeable, OwnableUpgradeable  {
     using Counters for Counters.Counter;
@@ -79,6 +82,9 @@ contract EarnNFTManagement is Initializable, ContextUpgradeable, OwnableUpgradea
     // variable to store the timestamp of the last claim
     uint256 public lastClaimTimestamp;
 
+    mapping(uint256 => uint256) private lastPowerReplenishmentTimestamp;
+
+
     // mapping for allowed addresses
     mapping(address=>bool) public isAllowed;
 
@@ -107,7 +113,6 @@ contract EarnNFTManagement is Initializable, ContextUpgradeable, OwnableUpgradea
      * @dev Sets main dependencies and constants
      * @param earnNFTAddress_ ERC721 contract address
      * @param gttAddress_ GTT ERC20 address
-     * @param url url of backend endpoint
      * @param carTokenPrice_ price of car token
      * @param bicycleTokenPrice_ price of bicycle token
      * @param scooterTokenPrice_ price of scooter token
@@ -118,7 +123,6 @@ contract EarnNFTManagement is Initializable, ContextUpgradeable, OwnableUpgradea
     function initialize(
         address earnNFTAddress_,
         address gttAddress_,
-        string memory url,
         uint256 carTokenPrice_,
         uint256 bicycleTokenPrice_,
         uint256 scooterTokenPrice_,
@@ -192,7 +196,7 @@ contract EarnNFTManagement is Initializable, ContextUpgradeable, OwnableUpgradea
      * @param eType vehicle type
     */
      
-    function mint(EType eType, bytes memory allowSignature) external payable {
+    function mint(EType eType) external payable {
         require(isAllowed[msg.sender], "EarnNFTManagement: Sender not allowed");
 
         uint256 price;
@@ -229,10 +233,13 @@ contract EarnNFTManagement is Initializable, ContextUpgradeable, OwnableUpgradea
         uint256 tokenId = earnNFT.mint(msg.sender);
 
         nftInfo[tokenId] = NFTInformation(
-                Level.COMMON, // nft type is common
-                eType, // EVehile
-                0 // power claimed
-            );
+            Level.COMMON,
+            eType,
+            0, // power claimed
+            900,
+            block.timestamp // initial current power 
+        );
+
 
         emit Mint(msg.sender, eType, tokenId);
     }
@@ -259,7 +266,7 @@ function _getRarity(uint256 tokenId) private view returns (uint256) {
     return rarity;
 }
 
-    function calculateMergeFee(Level newRarity) public view returns (uint256) {
+    function calculateMergeFee(Level newRarity) public pure returns (uint256) {
         uint256 rarityMultiplier = 0;
         if (newRarity == Level.EPIC) {
             rarityMultiplier = EPIC_RARITY_MULTIPLIER;
@@ -274,7 +281,6 @@ function _getRarity(uint256 tokenId) private view returns (uint256) {
         uint256 mergeFee = BASE_MERGE_FEE * rarityMultiplier;
     return mergeFee;
     }
-
 
     /**
  * @dev Merges up to 4 NFTs.
@@ -340,8 +346,11 @@ function _getRarity(uint256 tokenId) private view returns (uint256) {
         nftInfo[tokenId] = NFTInformation(
             newRarity,
             eTypeToCheck,
-            newPower
+            0, 
+            newPower,
+            block.timestamp 
         );
+
 
         // burn original NFTs
         for (uint256 i = 0; i < tokenIds.length; i++) {
@@ -352,8 +361,36 @@ function _getRarity(uint256 tokenId) private view returns (uint256) {
         emit Merge(msg.sender, tokenId, newPower, newRarity);
     }
 
+    function updateCurrentPower(uint256 tokenId) internal {
+        NFTInformation storage nft = nftInfo[tokenId];
+        uint256 timeSinceLastClaim = block.timestamp - nft.lastClaimTime;
+        uint256 replenishInterval = 6 * 3600; // 6 hours in seconds
+        uint256 intervalsSinceLastClaim = timeSinceLastClaim / replenishInterval;
+        uint256 powerToReplenish = (_getRarity(tokenId) == uint256(Level.COMMON) ? 900 : _getRarity(tokenId) == uint256(Level.UNCOMMON) ? 1800 : _getRarity(tokenId) == uint256(Level.RARE) ? 2700 : 3600) * intervalsSinceLastClaim * 25 / (6 * 3600 * 100);
+        nft.currentPower = min(nft.currentPower + powerToReplenish, nft.powerClaimed);
+        nft.lastClaimTime = block.timestamp;
+    }
+
+
+
+    function min(uint256 a, uint256 b) internal pure returns (uint256) {
+        return a < b ? a : b;
+    }
+
     function getPowerClaimed(uint256 tokenId) public view returns (uint256) {
-    return nftInfo[tokenId].powerClaimed;
+         return nftInfo[tokenId].powerClaimed;
+    }
+
+   function getCurrentPower(uint256 tokenId) public view returns (uint256) {
+        NFTInformation memory nft = nftInfo[tokenId];
+        uint256 timeSinceLastClaim = block.timestamp - nft.lastClaimTime;
+        uint256 replenishInterval = 6 * 3600; // 6 hours in seconds
+        uint256 intervalsSinceLastClaim = timeSinceLastClaim / replenishInterval;
+
+        uint256 basePower = nft.powerClaimed == 0 ? 900 : nft.powerClaimed;
+        uint256 powerToReplenish = basePower * intervalsSinceLastClaim * 25 / (6 * 3600 * 100);
+
+        return min(nft.currentPower + powerToReplenish, basePower);
     }
 
 
@@ -376,6 +413,7 @@ function _getRarity(uint256 tokenId) private view returns (uint256) {
     */
 
     function generate(uint256 tokenId, uint256 amount, bytes memory allowSignature) external {
+        updateCurrentPower(tokenId);
         bytes32 message = keccak256(abi.encodePacked(tokenId, amount, "earnNFT"));
         bytes32 hash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", message));
         address signatureAddress = hash.recover(allowSignature);
@@ -383,10 +421,8 @@ function _getRarity(uint256 tokenId) private view returns (uint256) {
 
         // Check if user has reached their daily claim limit
         require(dailyClaimedPower[block.timestamp][msg.sender] + amount <= dailyClaimLimit, "EarnNFTManagement: User has reached their daily claim limit");
-
         gttCoin.mint(earnNFT.ownerOf(tokenId), amount - nftInfo[tokenId].powerClaimed);
-        nftInfo[tokenId].powerClaimed = amount;
-
+        nftInfo[tokenId].lastClaimTime = block.timestamp;
         dailyClaimedPower[block.timestamp][msg.sender] += amount;
     }
 
