@@ -153,6 +153,9 @@ contract EarnNFTManagement is Initializable, ContextUpgradeable, OwnableUpgradea
         lastClaimTimestamp = block.timestamp;    
     }
 
+    function setAllowed(address _address, bool _allowed) public onlyOwner {
+    isAllowed[_address] = _allowed;
+}
 
     /**
      * @dev setting maxCarSupply
