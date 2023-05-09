@@ -204,16 +204,17 @@ contract EarnNFTManagement is Initializable, ContextUpgradeable, OwnableUpgradea
 
         uint256 price;
         if (eType == EType.CAR) {
-            price = carTokenPrice;
+            price = carTokenPrice * 10**18;
         } else if (eType == EType.BICYCLE) {
-            price = bicycleTokenPrice;
+            price = bicycleTokenPrice * 10**18;
         } else if (eType == EType.SCOOTER) {
-            price = scooterTokenPrice;
+            price = scooterTokenPrice * 10**18;
         } else {
             revert("EarnNFTManagement: Invalid vehicle type");
         }
 
         require(msg.value == price, "EarnNFTManagement: Incorrect Ether value");
+
 
         // Check if user has reached their daily power and token cap
         require(dailyClaimedPower[block.timestamp][msg.sender] < dailyPowerCap, "EarnNFTManagement: User has reached their daily Power cap");
