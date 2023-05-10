@@ -47,7 +47,7 @@ contract EarnNFTManagement is Initializable, ContextUpgradeable, OwnableUpgradea
     IEarnNFT public earnNFT;
 
     // mapping for nft information
-    mapping(uint256=>NFTInformation) public nftInfo;
+    mapping(uint256 => NFTInformation) public nftInfo;
 
     // max car possible supply
     uint256 public maxCarSupply;
@@ -156,9 +156,7 @@ contract EarnNFTManagement is Initializable, ContextUpgradeable, OwnableUpgradea
     function setAllowed(address _address, bool _allowed) public onlyOwner {
     isAllowed[_address] = _allowed;
 }
-    function level(uint256 tokenId) public view returns (uint256) {
-        return uint256(nftInfo[tokenId].nftType);
-}
+    
 
     /**
      * @dev setting maxCarSupply
