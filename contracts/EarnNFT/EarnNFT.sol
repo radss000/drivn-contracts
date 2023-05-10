@@ -87,13 +87,14 @@ contract EarnNFT is ERC721Enumerable, Ownable, IEarnNFT {
         baseTokenURI = baseURI_;
     }
 
-    /**
-     * @dev Get current base uri
-     */
     function level(uint256 tokenId) external view override returns (uint256) {
         IEarnNFTManagement.NFTInformation memory nftInfo = earnNFTManagement.nftInfo(tokenId);
         return uint256(nftInfo.nftType);
     }
+    /**
+     * @dev Get current base uri
+     */
+    
 
     function _baseURI() internal view override returns (string memory) {
         return baseTokenURI;
