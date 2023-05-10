@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.0;
+pragma solidity 0.8.18;
 
 /**
     interface for EarnNFT
@@ -24,5 +24,8 @@ interface IEarnNFT {
      * @param tokenId id of token
     */
     function ownerOf(uint256 tokenId) external view returns(address);
+
+
+    function level(uint256 tokenId) external view returns(uint256);
 
 }
